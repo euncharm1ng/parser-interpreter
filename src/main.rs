@@ -1,31 +1,124 @@
 #![allow(unused)]
 use std::process;
 use std::fmt;
+use std::env;
 
-enum LFAEDS{
+#[derive(Clone)]
+enum LFAEDS
+{
 	Num(i32),
 	Add{l:Box<LFAEDS>, r:Box<LFAEDS>},
 	Sub{l:Box<LFAEDS>, r:Box<LFAEDS>},
+	Id(String),
+	Fun{param:String, body:Box<LFAEDS>},
+	App{ftn:Box<LFAEDS>, arg:Box<LFAEDS>},
 	Error,
 }
 
-impl fmt::Display for LFAEDS {
+#[derive(Clone)]
+enum DefrdSub
+{
+	MtSub,
+	ASub{name:String, value:Box<LfaeValue>, ds:Box<DefrdSub>},
+}
+
+#[derive(Clone)]
+enum LfaeValue
+{
+	NumV(i32),
+	ClosureV{param:String, body:Box<LFAEDS>, ds:Box<DefrdSub>},
+	ExprV{expr:Box<LFAEDS>, ds:Box<DefrdSub>, value:Box<LfaeValue>},
+	False,
+}
+
+impl LfaeValue
+{
+	fn
+	unwrap(&self) -> i32
+	{
+		match self{
+			LfaeValue::NumV(val) => *val,
+			_=> panic!("error in lfaevalue.unwrap()"),
+		}
+	}
+	fn
+	get_param(&self) -> String
+	{
+		match self{
+			LfaeValue::ClosureV{param, body, ds} => (*param).to_string(),
+			_=> panic!("error n lfaevalue.get_param()"),
+		}
+	}
+	fn
+	get_body(&self) -> LFAEDS
+	{
+		match self{
+			LfaeValue::ClosureV{param, body, ds} => (**body).clone(),
+			_=> panic!("error n lfaevalue.get_body()"),
+		}
+	}
+	fn
+	get_ds(&self) -> DefrdSub
+	{
+		match self{
+			LfaeValue::ClosureV{param, body, ds} => (**ds).clone(),
+			_=> panic!("error n lfaevalue.get_ds()"),
+		}
+	}
+}
+
+impl fmt::Display for LFAEDS 
+{
 	fn 
 	fmt(&self, f: &mut fmt::Formatter) -> fmt::Result 
 	{
-		match &*self{
+		match self{
 			LFAEDS::Num(val) => write!(f, "(num {})", val),
 			LFAEDS::Add{l, r} => write!(f, "(add {} {})", l, r),
 			LFAEDS::Sub{l, r} => write!(f, "(sub {} {})", l, r),
+			LFAEDS::Id(name) => write!(f, "(id '{})", name),
+			LFAEDS::Fun{param, body} => write!(f, "(fun '{} {})", param, body),
+			LFAEDS::App{ftn, arg} => write!(f, "(app {} {})", ftn, arg),
 			LFAEDS::Error => write!(f, "error"),
 		}
+	}
+}
+
+impl fmt::Display for LfaeValue 
+{
+	fn 
+	fmt(&self, f: &mut fmt::Formatter) -> fmt::Result 
+	{
+		match self{
+			LfaeValue::NumV(val) => write!(f, "(numV {})", val),
+			LfaeValue::ClosureV{param, body, ds} => write!(f, "{}", body,),
+			LfaeValue::ExprV{expr, ds, value} => write!(f, "{}", value),
+			LfaeValue::False => write!(f, "false"),
+		}
+	}
+}
+
+fn
+strict(v:LfaeValue) -> LfaeValue
+{
+	match v {
+		LfaeValue::ExprV{expr, ds, mut value} => {
+			match *value {
+				LfaeValue::False => {
+					let v = strict(interp(&*expr, &ds));
+					*value = v.clone();
+					v
+				},
+				_=> *value,
+			}
+		}
+		_=> v,
 	}
 }
 
 fn
 parser(exp:&str) -> LFAEDS
 {
-	//println!("+_{}_+", exp);
 	let sexp = split_exp(exp);
 	if sexp.len() == 1 && sexp[0].parse::<i32>().is_ok() {
 		return LFAEDS::Num(sexp[0].parse::<i32>().unwrap());
@@ -36,12 +129,33 @@ parser(exp:&str) -> LFAEDS
 	else if sexp[0].chars().nth(0).unwrap() == '-' {
 		return LFAEDS::Sub{l:Box::new(parser(&sexp[1])), r:Box::new(parser(&sexp[2]))};
 	}
+	else if sexp[0].eq("with") {
+		return LFAEDS::App{
+			ftn:Box::new(
+				LFAEDS::Fun{
+					param:String::from(&split_exp(&sexp[1])[0]), 
+					body:Box::new(parser(&sexp[2]))
+				}
+			),
+			arg:Box::new(parser(&split_exp(&sexp[1])[1]))
+		};
+	}
+	else if sexp[0].eq("fun") {
+		return LFAEDS::Fun{param:String::from(&split_exp(&sexp[1])[0]), body:Box::new(parser(&sexp[2]))};
+	}
+	else if sexp.len() == 1 && sexp[0].parse::<String>().is_ok(){
+		return LFAEDS::Id(sexp[0].to_string());
+	}
+	else if sexp.len() == 2 {
+		return LFAEDS::App{ftn:Box::new(parser(&sexp[0])), arg:Box::new(parser(&sexp[1]))};
+	}
 	return LFAEDS::Error;
 }
 
 fn
 split_exp(exp:&str) -> Vec<String>
 {
+	//println!("{}", exp);
 	if (exp.chars().nth(0).unwrap() == '{' && exp.chars().last().unwrap() != '}')
 		|| (exp.chars().nth(0).unwrap() != '{' && exp.chars().last().unwrap() == '}') {
 		//println!("input error");
@@ -60,44 +174,16 @@ split_exp(exp:&str) -> Vec<String>
 	let mut buffer:String = "".to_string();
 	let mut sexp:Vec<String> = Vec::new();
 	for c in example_code.chars() {
-		//println!("{}", c);
-		/*
-		if c == '{' {
-			buffer.push_str(&c.to_string());
-			continue;
-		}
-		else 
-		*/
 		if c == ' ' && brkt_cnt == 0 {
 			if !buffer.is_empty() {
 				sexp.push(buffer);
 				buffer = "".to_string();
 			}
 		}
-		/*
-		else if c == '{' && brkt_cnt == 0 {
-			brkt_cnt += 1;
-			buffer = c.to_string();
-		}
 		else if c == '{' {
 			brkt_cnt += 1;
 			buffer.push_str(&c.to_string());
 		}
-		*/
-		else if c == '{' {
-			brkt_cnt += 1;
-			buffer.push_str(&c.to_string());
-		}
-		/*
-		else if c == '}' && brkt_cnt > 0 {
-			brkt_cnt -= 1;
-			buffer.push_str(&c.to_string());
-		}
-		else if c == '}' {
-			sexp.push(buffer);
-			buffer = "".to_string();
-		}
-		*/
 		else if c == '}' {
 			brkt_cnt -= 1;
 			buffer.push_str(&c.to_string());
@@ -114,27 +200,65 @@ split_exp(exp:&str) -> Vec<String>
 	if !buffer.is_empty() {
 		sexp.push(buffer);
 	}
-	//println!("{:?}", sexp);
+	//println!("sexp:: {:?}", sexp);
 	return sexp;
 }
 
 fn
-interp(expr:LFAEDS) -> i32
+look_up(id:String, ds_param:&DefrdSub) ->LfaeValue
+{
+	match ds_param{
+		DefrdSub::MtSub => panic!("error 'lookup free identifier"),
+		DefrdSub::ASub{name, value, ds} =>{
+			if id.eq(name){
+				strict((**value).clone())
+			}
+			else{
+				look_up(id, &*ds)
+			}
+		}
+	}
+}
+fn
+interp(expr:&LFAEDS, ds:&DefrdSub) -> LfaeValue
 {
 	match expr{
-		LFAEDS::Num(val) => val,
-		LFAEDS::Add{l, r} => {interp(*l) + interp(*r)},
-		LFAEDS::Sub{l, r} => {interp(*l) - interp(*r)},
+		LFAEDS::Num(val) => LfaeValue::NumV(*val),
+		LFAEDS::Add{l, r} => LfaeValue::NumV(interp(&*l, &ds).unwrap() + interp(&*r, &ds).unwrap()),
+		LFAEDS::Sub{l, r} => LfaeValue::NumV(interp(&*l, &ds).unwrap() - interp(&*r, &ds).unwrap()),
+		LFAEDS::Id(name) => look_up(name.to_string(), &ds),
+		LFAEDS::Fun{param, body} => LfaeValue::ClosureV{param:param.to_string(), body:Box::new((**body).clone()), ds:Box::new((*ds).clone())},
+		LFAEDS::App{ftn, arg} => {
+			let f_val = strict(interp(&*ftn, &ds));
+			let a_val = LfaeValue::ExprV{expr:Box::new((**arg).clone()), ds:Box::new((*ds).clone()), value:Box::new(LfaeValue::False)};
+			interp(&f_val.get_body(), &DefrdSub::ASub{name:f_val.get_param(), value:Box::new(a_val), ds:Box::new(f_val.get_ds())})
+		},
 		LFAEDS::Error => panic!("error in interp"),
 	}
 }
 		
-fn main() {
-    let input1 = String::from("{+ 3 2}");
+fn 
+main() 
+{
+	let input1 = String::from("{+ x 2}");
 	let input2 = String::from("{+ 30 {+ 5 6}}");
 	let input3 = String::from("{+ 30 {+ 5 {+ 6 7}}}");
 	let input4 = String::from("{with {x 3}{+ 30 {+ 5 x}}}");
-	let abs_syn = parser(&input3);
-	println!("{}", abs_syn);
-	println!("ans: {}", interp(abs_syn));
+	let input5 = String::from("{with {x 3}{with {f {fun {y} {+ x y}}}{with {x 5} {f 4}}}}");
+	let input6 = String::from("{with {f {fun {y} {+ x y}}}{with {x 5}{f 4}}}");
+	let input7 = String::from("{with {x 3} {with {f {fun {y} {+ x y}}} {with {x 5} {f 4}}}}");
+	let input8 = String::from("{with {f {fun {y} {+ x y}}}{with {x 5}{f 4}}}");
+
+	let args:Vec<String> = env::args().collect();
+	if args.len() == 3 && args[1].eq("-p"){
+		println!("{}", parser(&args[2]));
+	}
+	else if args.len() == 2 {
+		println!("{}", interp(&parser(&args[1]), &DefrdSub::MtSub));
+	}
+	else {
+		let abs_syn = parser(&input7);
+		println!("{}", abs_syn);
+		println!("{}", interp(&abs_syn, &DefrdSub::MtSub));
+	}
 }
